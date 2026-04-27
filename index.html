@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Selfig — AI LEGO Minifigure Matcher</title>
+  <meta name="description"
+    content="Upload a photo or take a selfie and let AI find the perfect LEGO minifigure parts to recreate you as a LEGO character." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+    rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧱</text></svg>" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-inner">
+        <div class="logo">
+          <span class="logo-icon">🧱</span>
+          <span class="logo-text">Sel<span class="logo-accent">fig</span></span>
+        </div>
+        <p class="tagline">Turn yourself into a LEGO minifigure with AI</p>
+      </div>
+    </header>
+
+    <!-- API Key Setup -->
+    <section id="api-key-section" class="section api-key-section">
+      <div class="glass-card api-key-card">
+        <div class="api-key-icon">🔑</div>
+        <h2>Gemini API Key</h2>
+        <p>Enter your Google Gemini API key to power the AI matching. Your key stays in your browser and is never sent
+          to any server.</p>
+        <div class="input-group">
+          <input type="password" id="api-key-input" placeholder="AIza..." autocomplete="off" />
+          <button id="api-key-submit" class="btn btn-primary">
+            <span>Start</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="api-key-help">
+          Get a free API key from Google AI Studio →
+        </a>
+      </div>
+    </section>
+
+    <!-- Main Content (hidden until API key is set) -->
+    <main id="main-content" class="main-content hidden">
+      <!-- Step Indicator -->
+      <div class="steps">
+        <div class="step active" data-step="1">
+          <div class="step-number">1</div>
+          <span class="step-label">Upload Photo</span>
+        </div>
+        <div class="step-line"></div>
+        <div class="step" data-step="2">
+          <div class="step-number">2</div>
+          <span class="step-label">AI Matching</span>
+        </div>
+        <div class="step-line"></div>
+        <div class="step" data-step="3">
+          <div class="step-number">3</div>
+          <span class="step-label">Your Minifig</span>
+        </div>
+      </div>
+
+      <!-- Step 1: Photo Upload -->
+      <section id="upload-section" class="section">
+        <div class="glass-card upload-card">
+          <h2>Show us who you are</h2>
+          <p>Upload a clear photo of yourself (or someone else!) — face visible, good lighting works best.</p>
+
+          <div class="upload-area" id="upload-area">
+            <div class="upload-content" id="upload-placeholder">
+              <div class="upload-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+              </div>
+              <p class="upload-text">Drag & drop a photo here</p>
+              <p class="upload-subtext">or click to browse</p>
+            </div>
+            <img id="upload-preview" class="upload-preview hidden" alt="Uploaded photo preview" />
+            <input type="file" id="file-input" accept="image/*" hidden />
+          </div>
+
+          <div class="upload-actions">
+            <button id="camera-btn" class="btn btn-secondary">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+              <span>Use Camera</span>
+            </button>
+            <button id="match-btn" class="btn btn-primary hidden" disabled>
+              <span>Find My Minifig</span>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Camera Modal -->
+        <div id="camera-modal" class="modal hidden">
+          <div class="modal-backdrop"></div>
+          <div class="modal-content glass-card">
+            <button class="modal-close" id="camera-close">✕</button>
+            <h3>Take a Selfie</h3>
+            <div class="camera-container">
+              <video id="camera-video" autoplay playsinline></video>
+              <canvas id="camera-canvas" hidden></canvas>
+              <div class="camera-overlay">
+                <div class="camera-frame"></div>
+              </div>
+            </div>
+            <div class="camera-actions">
+              <button id="camera-capture" class="btn btn-primary btn-round">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="12" r="10" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Step 2: Matching (Loading) -->
+      <section id="matching-section" class="section hidden">
+        <div class="glass-card matching-card">
+          <div class="matching-animation">
+            <div class="matching-photo">
+              <img id="matching-photo-img" alt="Your photo" />
+            </div>
+            <div class="matching-arrows">
+              <div class="arrow-pulse">→</div>
+            </div>
+            <div class="matching-lego">
+              <div class="lego-spinner">🧱</div>
+            </div>
+          </div>
+          <h2>Finding your perfect minifigure...</h2>
+          <p class="matching-status" id="matching-status">Analyzing your photo with Gemini AI...</p>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Step 3: Results -->
+      <section id="results-section" class="section hidden">
+        <div class="results-header">
+          <h2>Your LEGO Minifigure Match! 🎉</h2>
+          <p>Here's the AI-selected combination of parts that best represents you.</p>
+        </div>
+
+        <div class="results-grid">
+          <!-- User Photo -->
+          <div class="result-source glass-card">
+            <h3>You</h3>
+            <img id="result-source-img" alt="Your photo" />
+          </div>
+
+          <!-- Minifig Assembly -->
+          <div class="result-minifig glass-card">
+            <h3>Your Minifig</h3>
+            <div class="minifig-assembly" id="minifig-assembly">
+              <!-- Filled dynamically -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Part Details -->
+        <div class="parts-grid" id="parts-grid">
+          <!-- Filled dynamically -->
+        </div>
+
+        <!-- AI Reasoning -->
+        <div class="glass-card reasoning-card">
+          <h3>🤖 AI Reasoning</h3>
+          <p id="ai-reasoning"></p>
+        </div>
+
+        <!-- Parts List -->
+        <div class="glass-card parts-list-card">
+          <div class="parts-list-header">
+            <h3>📋 Parts List</h3>
+            <button class="btn-copy" id="copy-parts-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+              <span>Copy</span>
+            </button>
+          </div>
+          <div class="parts-list" id="parts-list">
+            <!-- Filled dynamically -->
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="results-actions">
+          <a id="lego-link" href="#" target="_blank" rel="noopener" class="btn btn-primary btn-large">
+            <span>🧱 Build It on LEGO.com</span>
+          </a>
+          <button id="retry-btn" class="btn btn-secondary">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+            <span>Try Another Photo</span>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>Selfig is a fan-made project and is not affiliated with LEGO Group. LEGO® is a trademark of the LEGO Group.</p>
+    </footer>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
