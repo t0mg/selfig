@@ -32,9 +32,11 @@ export class Matcher {
   }
 
   async loadCatalog() {
+    const base = import.meta.env.BASE_URL;
+
     // Try to load enriched catalog first
     try {
-      const res = await fetch('/data/catalog-final.json');
+      const res = await fetch(`${base}data/catalog-final.json`);
       if (res.ok) {
         const data = await res.json();
         this.catalog = data.catalog;
@@ -49,7 +51,7 @@ export class Matcher {
     }
 
     // Fallback to raw catalog
-    const res = await fetch('/data/catalog.json');
+    const res = await fetch(`${base}data/catalog.json`);
     const data = await res.json();
     this.catalog = data.catalog;
     this.hasDescriptions = false;
