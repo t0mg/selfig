@@ -105,14 +105,9 @@ export class Matcher {
     results.push({ ...accessories[0], category: CATEGORY_ORDER[4] });
     results.push({ ...accessories[1], category: CATEGORY_ORDER[5] });
 
-    onProgress(90, 'Generating final reasoning...');
-
-    // Get overall reasoning
-    const reasoning = await this.generateReasoning(personDescription, results, photoBase64);
-
     onProgress(100, 'Done!');
 
-    return { parts: results, reasoning, personDescription };
+    return { parts: results, personDescription };
   }
 
   async describePhoto(photoBase64) {
@@ -287,27 +282,6 @@ Respond ONLY in this exact JSON format (no markdown, no code blocks):
     };
   }
 
-  async generateReasoning(personDescription, results, photoBase64) {
-    const partsSummary = results.map(r =>
-      `${r.category.label}: ${r.partName} — ${r.reason}`
-    ).join('\n');
-
-    const prompt = `You helped select LEGO minifigure parts to match a real person. Write a fun, friendly 2-3 sentence summary of WHY these parts were chosen and how well they capture the person's look.
-
-PERSON: ${personDescription}
-
-SELECTED PARTS:
-${partsSummary}
-
-Keep it playful and enthusiastic!`;
-
-    try {
-      const result = await this.model.generateContent(prompt);
-      return result.response.text().trim();
-    } catch (error) {
-      return 'Your AI-matched LEGO minifigure is ready! We selected the closest parts across all categories to capture your unique look.';
-    }
-  }
 
   parseJSON(text) {
     // Remove markdown code blocks if present
@@ -329,14 +303,36 @@ Keep it playful and enthusiastic!`;
   }
 
   async fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
+    const MAX_SIZE = 1024;
+    const JPEG_QUALITY = 0.85;
+
+    // Load the image
+    const bitmap = await createImageBitmap(file);
+    const { width, height } = bitmap;
+
+    // Calculate scaled dimensions (cap longest edge at MAX_SIZE)
+    let newW = width;
+    let newH = height;
+    if (width > MAX_SIZE || height > MAX_SIZE) {
+      const scale = MAX_SIZE / Math.max(width, height);
+      newW = Math.round(width * scale);
+      newH = Math.round(height * scale);
+    }
+
+    // Draw onto an offscreen canvas and re-encode as JPEG
+    const canvas = document.createElement('canvas');
+    canvas.width = newW;
+    canvas.height = newH;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, newW, newH);
+    bitmap.close();
+
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.readAsDataURL(blob);
+      }, 'image/jpeg', JPEG_QUALITY);
     });
   }
 }

@@ -43,7 +43,6 @@ const minifigAssembly = $('minifig-assembly');
 const partsGrid = $('parts-grid');
 const partsList = $('parts-list');
 const copyPartsBtn = $('copy-parts-btn');
-const aiReasoning = $('ai-reasoning');
 const legoLink = $('lego-link');
 const retryBtn = $('retry-btn');
 
@@ -222,7 +221,7 @@ async function startMatching() {
 let lastResultParts = [];
 
 function displayResults(result) {
-  const { parts, reasoning } = result;
+  const { parts } = result;
   lastResultParts = parts;
 
   // Source photo
@@ -321,8 +320,7 @@ function displayResults(result) {
     partsList.appendChild(row);
   });
 
-  // AI Reasoning
-  aiReasoning.textContent = reasoning;
+  // AI Reasoning removed to optimize LLM usage
 
   // LEGO builder link
   legoLink.href = 'https://www.lego.com/fr-fr/pick-and-build/create-a-minifigure?open=true';
