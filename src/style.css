@@ -35,7 +35,7 @@
   --accent-glow: rgba(255, 215, 0, 0.3);
   --accent-dim: rgba(255, 215, 0, 0.8);
 
-  --gradient-hero: linear-gradient(135deg, #ffd700 0%, #ff8c00 50%, #e3000b 100%);
+  --gradient-hero: linear-gradient(135deg, var(--text-primary) 0%, var(--lego-yellow) 50%, #ffd700 100%);
   --gradient-card: linear-gradient(145deg, rgba(var(--overlay-rgb), 0.02) 0%, rgba(var(--overlay-rgb), 0.05) 100%);
   --gradient-btn: linear-gradient(135deg, #ffd700 0%, #ffb700 100%);
 
@@ -202,7 +202,9 @@ a:hover {
 }
 
 .logo-icon {
-  font-size: 2rem;
+  display: flex;
+  align-items: center;
+  line-height: 1;
   animation: logoBounce 3s ease-in-out infinite;
 }
 
@@ -696,7 +698,7 @@ a:hover {
 }
 
 .lego-spinner {
-  font-size: 2.5rem;
+  line-height: 1;
   animation: legoSpin 2s linear infinite;
 }
 
@@ -1036,6 +1038,12 @@ a:hover {
 .footer p {
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+/* ── Minifig Head Icon ── */
+.minifig-head-inline {
+  vertical-align: -0.15em;
+  margin-right: 0.15em;
 }
 
 /* ── Utilities ── */
