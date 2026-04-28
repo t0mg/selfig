@@ -30,6 +30,7 @@ const matchBtn = $('match-btn');
 const cameraModal = $('camera-modal');
 const cameraClose = $('camera-close');
 const cameraCapture = $('camera-capture');
+const cameraSwitch = $('camera-switch');
 
 const uploadSection = $('upload-section');
 const matchingSection = $('matching-section');
@@ -177,6 +178,14 @@ function initCamera() {
 
   cameraClose.addEventListener('click', () => camera.close());
   document.querySelector('.modal-backdrop')?.addEventListener('click', () => camera.close());
+
+  cameraSwitch.addEventListener('click', async () => {
+    try {
+      await camera.switchCamera();
+    } catch (error) {
+      showToast('Could not switch camera');
+    }
+  });
 
   cameraCapture.addEventListener('click', async () => {
     const file = await camera.capture();

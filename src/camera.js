@@ -1,5 +1,5 @@
 /**
- * Camera module — handles webcam access and photo capture.
+ * Camera module — handles webcam access, photo capture, and camera switching.
  */
 
 export class Camera {
@@ -8,22 +8,31 @@ export class Camera {
     this.canvas = document.getElementById('camera-canvas');
     this.modal = document.getElementById('camera-modal');
     this.stream = null;
-    this.onCapture = null;
+    this.facingMode = 'user'; // 'user' = front, 'environment' = rear
   }
 
   async open() {
     this.modal.classList.remove('hidden');
+    await this._startStream();
+  }
+
+  async _startStream() {
+    // Stop any existing stream first
+    this._stopTracks();
 
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1280 },
           height: { ideal: 960 },
-          facingMode: 'user',
+          facingMode: this.facingMode,
         },
         audio: false,
       });
       this.video.srcObject = this.stream;
+
+      // Mirror only the front camera
+      this.video.style.transform = this.facingMode === 'user' ? 'scaleX(-1)' : 'none';
     } catch (error) {
       console.error('Camera access failed:', error);
       this.close();
@@ -31,14 +40,21 @@ export class Camera {
     }
   }
 
+  async switchCamera() {
+    this.facingMode = this.facingMode === 'user' ? 'environment' : 'user';
+    await this._startStream();
+  }
+
   capture() {
     const ctx = this.canvas.getContext('2d');
     this.canvas.width = this.video.videoWidth;
     this.canvas.height = this.video.videoHeight;
 
-    // Mirror the capture to match the preview
-    ctx.translate(this.canvas.width, 0);
-    ctx.scale(-1, 1);
+    // Mirror the capture only for the front camera (to match the preview)
+    if (this.facingMode === 'user') {
+      ctx.translate(this.canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
     ctx.drawImage(this.video, 0, 0);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
@@ -50,11 +66,15 @@ export class Camera {
     });
   }
 
-  close() {
+  _stopTracks() {
     if (this.stream) {
       this.stream.getTracks().forEach(track => track.stop());
       this.stream = null;
     }
+  }
+
+  close() {
+    this._stopTracks();
     this.video.srcObject = null;
     this.modal.classList.add('hidden');
   }

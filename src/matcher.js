@@ -6,8 +6,9 @@
  * If we have pre-enriched descriptions, we use those. Otherwise we send a subset
  * of part images directly to Gemini alongside the user photo.
  * 
- * We split matching into per-category calls to stay within token limits and
- * improve response quality.
+ * We use two LLM calls:
+ *   1. describePhoto — sends the image, returns a text description
+ *   2. matchAllCategories — sends the text description + full catalog, returns all picks
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -60,50 +61,27 @@ export class Matcher {
 
   /**
    * Main matching function — takes a user photo and returns the best matching parts.
+   * Uses only 2 LLM calls: one vision call to describe the photo, one text call
+   * to pick the best part from every category at once.
    * @param {File} photoFile - The user's uploaded photo
    * @param {function} onProgress - Progress callback (step, message)
-   * @returns {Promise<{parts: Array, reasoning: string}>}
+   * @returns {Promise<{parts: Array, personDescription: string}>}
    */
   async match(photoFile, onProgress = () => { }) {
     if (!this.catalog) await this.loadCatalog();
 
-    // Convert photo to base64
+    // Convert photo to base64 (resized + JPEG-encoded)
     const photoBase64 = await this.fileToBase64(photoFile);
 
     onProgress(10, 'Analyzing your photo...');
 
-    // First, get a description of the person in the photo
+    // Call 1: describe the person in the photo (vision call)
     const personDescription = await this.describePhoto(photoBase64);
-    onProgress(25, 'Photo analyzed! Searching for matching parts...');
+    onProgress(40, 'Photo analyzed! Matching all parts...');
 
-    // Match each category
-    const results = [];
-
-    // HEAD
-    onProgress(30, 'Finding the perfect head...');
-    const head = await this.matchCategory('BAM_HEAD', personDescription, photoBase64);
-    results.push({ ...head, category: CATEGORY_ORDER[0] });
-
-    // HEADWEAR
-    onProgress(45, 'Selecting hair / headwear...');
-    const headwear = await this.matchCategory('BAM_HEADWEAR', personDescription, photoBase64);
-    results.push({ ...headwear, category: CATEGORY_ORDER[1] });
-
-    // TORSO
-    onProgress(55, 'Matching torso / outfit...');
-    const torso = await this.matchCategory('BAM_TORSO', personDescription, photoBase64);
-    results.push({ ...torso, category: CATEGORY_ORDER[2] });
-
-    // LEGS
-    onProgress(65, 'Picking the right legs...');
-    const legs = await this.matchCategory('BAM_LEG', personDescription, photoBase64);
-    results.push({ ...legs, category: CATEGORY_ORDER[3] });
-
-    // ACCESSORIES (pick 2)
-    onProgress(75, 'Choosing accessories...');
-    const accessories = await this.matchAccessories(personDescription, photoBase64);
-    results.push({ ...accessories[0], category: CATEGORY_ORDER[4] });
-    results.push({ ...accessories[1], category: CATEGORY_ORDER[5] });
+    // Call 2: pick best part for every category in one shot (text-only call)
+    const results = await this.matchAllCategories(personDescription);
+    onProgress(90, 'Assembling your minifigure...');
 
     onProgress(100, 'Done!');
 
@@ -132,156 +110,122 @@ Be detailed but concise. This description will be used to select LEGO minifigure
     return result.response.text().trim();
   }
 
-  async matchCategory(categoryKey, personDescription, photoBase64) {
-    const parts = this.catalog[categoryKey];
-    if (!parts || parts.length === 0) {
-      return { partId: null, partName: 'Unknown', reason: 'No parts available' };
-    }
-
-    // Build part list text for the prompt
-    const partsList = parts.map((p, i) => {
-      const desc = this.hasDescriptions && p.description ? p.description : p.name;
-      return `[${p.id}] ${desc}`;
-    }).join('\n');
-
+  /**
+   * Single LLM call that picks the best part for every category.
+   * Text-only — no image tokens needed since we already have the description.
+   */
+  async matchAllCategories(personDescription) {
+    // Build one combined catalog listing grouped by category
     const categoryLabels = {
-      BAM_HEAD: 'head (face)',
-      BAM_HEADWEAR: 'headwear or hair',
-      BAM_TORSO: 'torso (upper body / outfit)',
-      BAM_LEG: 'legs (lower body)',
+      BAM_HEAD: 'HEAD (face)',
+      BAM_HEADWEAR: 'HEADWEAR / HAIR',
+      BAM_TORSO: 'TORSO (upper body / outfit)',
+      BAM_LEG: 'LEGS (lower body)',
+      BAM_ACC: 'ACCESSORIES',
     };
+
+    const sections = [];
+    for (const [catKey, label] of Object.entries(categoryLabels)) {
+      const parts = this.catalog[catKey];
+      if (!parts || parts.length === 0) continue;
+      const list = parts.map(p => {
+        const desc = this.hasDescriptions && p.description ? p.description : p.name;
+        return `  [${p.id}] ${desc}`;
+      }).join('\n');
+      sections.push(`── ${label} ──\n${list}`);
+    }
 
     const prompt = `You are helping create a LEGO minifigure that looks like a real person.
 
 PERSON DESCRIPTION:
 ${personDescription}
 
-AVAILABLE LEGO ${categoryLabels[categoryKey]?.toUpperCase() || categoryKey} PARTS:
-${partsList}
+AVAILABLE PARTS BY CATEGORY:
+${sections.join('\n\n')}
 
-Select the ONE part that best matches this person. Consider skin tone, expression, hair color/style, outfit, etc.
+Select the ONE best matching part for each body category (head, headwear, torso, legs) and TWO accessories that suit this person. Consider skin tone, expression, hair color/style, outfit, personality, etc.
+
+IMPORTANT: Unless the person is clearly a young child, do NOT pick child-sized or mini/short legs and torsos. These parts are meant for kid minifigures and look wrong on adults. Always prefer standard full-size torso and leg parts for teens and adults.
 
 Respond ONLY in this exact JSON format (no markdown, no code blocks):
-{"partId": "THE_ELEMENT_ID", "reason": "Brief explanation of why this part matches"}`;
+{
+  "head": {"partId": "ID", "reason": "Why"},
+  "headwear": {"partId": "ID", "reason": "Why"},
+  "torso": {"partId": "ID", "reason": "Why"},
+  "legs": {"partId": "ID", "reason": "Why"},
+  "accessory1": {"partId": "ID", "reason": "Why"},
+  "accessory2": {"partId": "ID", "reason": "Why"}
+}`;
 
     try {
-      const result = await this.model.generateContent([
-        prompt,
-        {
-          inlineData: {
-            mimeType: 'image/jpeg',
-            data: photoBase64,
-          },
-        },
-      ]);
-
+      const result = await this.model.generateContent(prompt);
       const text = result.response.text().trim();
       const parsed = this.parseJSON(text);
 
-      // Find the matching part
-      const part = parts.find(p => p.id === parsed.partId);
-      if (part) {
+      // Map response keys to category keys
+      const keyMap = [
+        { responseKey: 'head', catKey: 'BAM_HEAD', catIndex: 0 },
+        { responseKey: 'headwear', catKey: 'BAM_HEADWEAR', catIndex: 1 },
+        { responseKey: 'torso', catKey: 'BAM_TORSO', catIndex: 2 },
+        { responseKey: 'legs', catKey: 'BAM_LEG', catIndex: 3 },
+        { responseKey: 'accessory1', catKey: 'BAM_ACC', catIndex: 4 },
+        { responseKey: 'accessory2', catKey: 'BAM_ACC', catIndex: 5 },
+      ];
+
+      return keyMap.map(({ responseKey, catKey, catIndex }) => {
+        const pick = parsed[responseKey];
+        const parts = this.catalog[catKey] || [];
+        const part = parts.find(p => p.id === pick?.partId);
+
+        if (part) {
+          return {
+            partId: part.id,
+            designId: part.designId,
+            partName: part.name,
+            description: part.description || part.name,
+            reason: pick.reason || 'Best match',
+            price: part.price,
+            imageUrl: IMG_URL(part.id),
+            category: CATEGORY_ORDER[catIndex],
+          };
+        }
+
+        // Fallback: first part in the category
+        const fallback = parts[catIndex === 5 ? 1 : 0] || parts[0];
+        if (!fallback) {
+          return {
+            partId: null, partName: 'Unknown', reason: 'No parts available',
+            category: CATEGORY_ORDER[catIndex],
+          };
+        }
         return {
-          partId: part.id,
-          designId: part.designId,
-          partName: part.name,
-          description: part.description || part.name,
-          reason: parsed.reason || 'Best match',
-          price: part.price,
-          imageUrl: IMG_URL(part.id),
+          partId: fallback.id,
+          designId: fallback.designId,
+          partName: fallback.name,
+          description: fallback.description || fallback.name,
+          reason: 'Default selection (matching failed)',
+          price: fallback.price,
+          imageUrl: IMG_URL(fallback.id),
+          category: CATEGORY_ORDER[catIndex],
         };
-      }
+      });
     } catch (error) {
-      console.error(`Match failed for ${categoryKey}:`, error);
-    }
+      console.error('Batch matching failed:', error);
 
-    // Fallback: return first part
-    const fallback = parts[0];
-    return {
-      partId: fallback.id,
-      designId: fallback.designId,
-      partName: fallback.name,
-      description: fallback.description || fallback.name,
-      reason: 'Default selection (matching failed)',
-      price: fallback.price,
-      imageUrl: IMG_URL(fallback.id),
-    };
-  }
-
-  async matchAccessories(personDescription, photoBase64) {
-    const parts = this.catalog['BAM_ACC'];
-    if (!parts || parts.length < 2) {
-      return [
-        { partId: null, partName: 'None', reason: 'No accessories available' },
-        { partId: null, partName: 'None', reason: 'No accessories available' },
-      ];
-    }
-
-    const partsList = parts.map(p => {
-      const desc = this.hasDescriptions && p.description ? p.description : p.name;
-      return `[${p.id}] ${desc}`;
-    }).join('\n');
-
-    const prompt = `You are helping create a LEGO minifigure that looks like a real person.
-
-PERSON DESCRIPTION:
-${personDescription}
-
-AVAILABLE LEGO ACCESSORIES:
-${partsList}
-
-Select exactly TWO accessories that would best suit this person. Consider what they're holding, wearing, or what fits their personality/vibe.
-
-Respond ONLY in this exact JSON format (no markdown, no code blocks):
-{"accessory1": {"partId": "ID", "reason": "Why"}, "accessory2": {"partId": "ID", "reason": "Why"}}`;
-
-    try {
-      const result = await this.model.generateContent([
-        prompt,
-        {
-          inlineData: {
-            mimeType: 'image/jpeg',
-            data: photoBase64,
-          },
-        },
-      ]);
-
-      const text = result.response.text().trim();
-      const parsed = this.parseJSON(text);
-
-      const acc1 = parts.find(p => p.id === parsed.accessory1?.partId);
-      const acc2 = parts.find(p => p.id === parsed.accessory2?.partId);
-
-      return [
-        acc1 ? {
-          partId: acc1.id, designId: acc1.designId, partName: acc1.name,
-          description: acc1.description || acc1.name,
-          reason: parsed.accessory1?.reason || 'Best match',
-          price: acc1.price, imageUrl: IMG_URL(acc1.id),
-        } : this.fallbackAccessory(parts, 0),
-        acc2 ? {
-          partId: acc2.id, designId: acc2.designId, partName: acc2.name,
-          description: acc2.description || acc2.name,
-          reason: parsed.accessory2?.reason || 'Best match',
-          price: acc2.price, imageUrl: IMG_URL(acc2.id),
-        } : this.fallbackAccessory(parts, 1),
-      ];
-    } catch (error) {
-      console.error('Accessory matching failed:', error);
-      return [this.fallbackAccessory(parts, 0), this.fallbackAccessory(parts, 1)];
+      // Full fallback — return first part from each category
+      return CATEGORY_ORDER.map((cat, i) => {
+        const catKey = i < 4 ? cat.key : 'BAM_ACC';
+        const parts = this.catalog[catKey] || [];
+        const p = parts[i === 5 ? 1 : 0] || parts[0];
+        if (!p) return { partId: null, partName: 'Unknown', reason: 'No parts', category: cat };
+        return {
+          partId: p.id, designId: p.designId, partName: p.name,
+          description: p.description || p.name, reason: 'Default selection',
+          price: p.price, imageUrl: IMG_URL(p.id), category: cat,
+        };
+      });
     }
   }
-
-  fallbackAccessory(parts, index) {
-    const p = parts[index] || parts[0];
-    return {
-      partId: p.id, designId: p.designId, partName: p.name,
-      description: p.description || p.name,
-      reason: 'Default selection',
-      price: p.price, imageUrl: IMG_URL(p.id),
-    };
-  }
-
 
   parseJSON(text) {
     // Remove markdown code blocks if present
