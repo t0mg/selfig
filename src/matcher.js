@@ -145,7 +145,7 @@ Be detailed but concise. This description will be used to select LEGO minifigure
       const parts = this.catalog[catKey];
       if (!parts || parts.length === 0) continue;
       const list = parts.map(p => {
-        const desc = this.hasDescriptions && p.description ? p.description : p.name;
+        const desc = this.hasDescriptions && p.description ? `${p.name} - ${p.description}` : p.name;
         return `  [${p.id}] ${desc}`;
       }).join('\n');
       sections.push(`── ${label} ──\n${list}`);
@@ -165,7 +165,7 @@ CRITICAL RULES:
 1. Accessories are optional. We should not force 2 accessories if there is no strong need for it, or no good match.
 2. Do not include a weapon accessory UNLESS the reference image clearly shows the person holding a weapon.
 3. If the reference image is of a bald person, it is ok to omit the headwear (wig/hat) piece.
-4. For legs, only allow the selection of "MINI LEG" parts if the reference image is representing a child. Do not use "MINI LEG" parts otherwise.
+4. For legs, avoid "MINI LEG" type parts unless the reference image is representing a child.
 
 If you choose to omit an optional part (headwear or accessories), set its "partId" to null.`;
 
