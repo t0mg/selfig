@@ -10,6 +10,7 @@ import { Matcher } from './matcher.js';
 // ── State ──
 let matcher = null;
 let currentPhoto = null;
+let currentDescription = null;
 const camera = new Camera();
 
 // ── DOM Elements ──
@@ -45,6 +46,7 @@ const partsGrid = $('parts-grid');
 const partsList = $('parts-list');
 const copyPartsBtn = $('copy-parts-btn');
 const legoLink = $('lego-link');
+const rematchBtn = $('rematch-btn');
 const retryBtn = $('retry-btn');
 
 // ── Toast ──
@@ -195,7 +197,7 @@ function initCamera() {
 }
 
 // ── Matching ──
-async function startMatching() {
+async function startMatching(isRematch = false) {
   if (!currentPhoto || !matcher) return;
 
   setStep(2);
@@ -205,10 +207,19 @@ async function startMatching() {
   progressFill.style.width = '0%';
 
   try {
-    const result = await matcher.match(currentPhoto, (progress, message) => {
-      progressFill.style.width = `${progress}%`;
-      matchingStatus.textContent = message;
-    });
+    let result;
+    if (isRematch && currentDescription) {
+      result = await matcher.rematch(currentDescription, (progress, message) => {
+        progressFill.style.width = `${progress}%`;
+        matchingStatus.textContent = message;
+      });
+    } else {
+      result = await matcher.match(currentPhoto, (progress, message) => {
+        progressFill.style.width = `${progress}%`;
+        matchingStatus.textContent = message;
+      });
+      currentDescription = result.personDescription;
+    }
 
     displayResults(result);
     setStep(3);
@@ -350,10 +361,15 @@ function cleanPartName(name) {
     .replace(/"/g, '');
 }
 
-// ── Retry ──
+// ── Retry & Rematch ──
 function initRetry() {
+  rematchBtn.addEventListener('click', () => {
+    startMatching(true);
+  });
+
   retryBtn.addEventListener('click', () => {
     currentPhoto = null;
+    currentDescription = null;
     uploadPreview.classList.add('hidden');
     uploadPlaceholder.classList.remove('hidden');
     matchBtn.classList.add('hidden');

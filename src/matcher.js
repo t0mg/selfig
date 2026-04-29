@@ -11,7 +11,7 @@
  *   2. matchAllCategories — sends the text description + full catalog, returns all picks
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 
 const IMG_URL = (id) => `https://www.lego.com/cdn/mff/optimised/thumbnails/${id}_0.webp`;
 
@@ -88,6 +88,22 @@ export class Matcher {
     return { parts: results, personDescription };
   }
 
+  /**
+   * Skips the vision call and uses an existing description to rematch the parts.
+   */
+  async rematch(personDescription, onProgress = () => { }) {
+    if (!this.catalog) await this.loadCatalog();
+
+    onProgress(40, 'Re-matching all parts...');
+
+    const results = await this.matchAllCategories(personDescription);
+    onProgress(90, 'Assembling your minifigure...');
+
+    onProgress(100, 'Done!');
+
+    return { parts: results, personDescription };
+  }
+
   async describePhoto(photoBase64) {
     const result = await this.model.generateContent([
       `Describe this person in detail for the purpose of creating a matching LEGO minifigure. Focus on:
@@ -143,22 +159,46 @@ ${personDescription}
 AVAILABLE PARTS BY CATEGORY:
 ${sections.join('\n\n')}
 
-Select the ONE best matching part for each body category (head, headwear, torso, legs) and TWO accessories that suit this person. Consider skin tone, expression, hair color/style, outfit, personality, etc.
+Select the ONE best matching part for each body category (head, headwear, torso, legs) and UP TO TWO accessories that suit this person. Consider skin tone, expression, hair color/style, outfit, personality, etc.
 
-IMPORTANT: Unless the person is clearly a young child, do NOT pick child-sized or mini/short legs and torsos. These parts are meant for kid minifigures and look wrong on adults. Always prefer standard full-size torso and leg parts for teens and adults.
+CRITICAL RULES:
+1. Accessories are optional. We should not force 2 accessories if there is no strong need for it, or no good match.
+2. Do not include a weapon accessory UNLESS the reference image clearly shows the person holding a weapon.
+3. If the reference image is of a bald person, it is ok to omit the headwear (wig/hat) piece.
+4. For legs, only allow the selection of "MINI LEG" parts if the reference image is representing a child. Do not use "MINI LEG" parts otherwise.
 
-Respond ONLY in this exact JSON format (no markdown, no code blocks):
-{
-  "head": {"partId": "ID", "reason": "Why"},
-  "headwear": {"partId": "ID", "reason": "Why"},
-  "torso": {"partId": "ID", "reason": "Why"},
-  "legs": {"partId": "ID", "reason": "Why"},
-  "accessory1": {"partId": "ID", "reason": "Why"},
-  "accessory2": {"partId": "ID", "reason": "Why"}
-}`;
+If you choose to omit an optional part (headwear or accessories), set its "partId" to null.`;
 
     try {
-      const result = await this.model.generateContent(prompt);
+      const partSchema = {
+        type: SchemaType.OBJECT,
+        properties: {
+          partId: { type: SchemaType.STRING, nullable: true },
+          reason: { type: SchemaType.STRING }
+        },
+        required: ["reason"]
+      };
+
+      const responseSchema = {
+        type: SchemaType.OBJECT,
+        properties: {
+          head: partSchema,
+          headwear: partSchema,
+          torso: partSchema,
+          legs: partSchema,
+          accessory1: partSchema,
+          accessory2: partSchema
+        },
+        required: ["head", "headwear", "torso", "legs", "accessory1", "accessory2"]
+      };
+
+      const result = await this.model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: responseSchema,
+        }
+      });
       const text = result.response.text().trim();
       const parsed = this.parseJSON(text);
 
@@ -174,8 +214,21 @@ Respond ONLY in this exact JSON format (no markdown, no code blocks):
 
       return keyMap.map(({ responseKey, catKey, catIndex }) => {
         const pick = parsed[responseKey];
+
+        if (!pick || pick.partId === null || pick.partId === 'null') {
+          return {
+            partId: null,
+            partName: 'None',
+            description: 'No part selected',
+            reason: pick?.reason || 'Intentionally omitted',
+            price: null,
+            imageUrl: null,
+            category: CATEGORY_ORDER[catIndex],
+          };
+        }
+
         const parts = this.catalog[catKey] || [];
-        const part = parts.find(p => p.id === pick?.partId);
+        const part = parts.find(p => p.id === pick.partId);
 
         if (part) {
           return {
@@ -186,6 +239,20 @@ Respond ONLY in this exact JSON format (no markdown, no code blocks):
             reason: pick.reason || 'Best match',
             price: part.price,
             imageUrl: IMG_URL(part.id),
+            category: CATEGORY_ORDER[catIndex],
+          };
+        }
+
+        // For optional categories, if the AI picked an invalid ID,
+        // it is better to omit the part than to force a default selection.
+        if (catKey === 'BAM_ACC' || catKey === 'BAM_HEADWEAR') {
+          return {
+            partId: null,
+            partName: 'None',
+            description: 'No part selected',
+            reason: 'Invalid part ID selected by AI',
+            price: null,
+            imageUrl: null,
             category: CATEGORY_ORDER[catIndex],
           };
         }
