@@ -13,6 +13,19 @@ let currentPhoto = null;
 let currentDescription = null;
 const camera = new Camera();
 
+// Register Service Worker for Image Caching
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    // Determine the base path dynamically if hosted on GitHub Pages
+    const basePath = window.location.pathname.endsWith('/')
+      ? window.location.pathname
+      : window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
+    navigator.serviceWorker.register(`${basePath}sw.js`).catch(err => {
+      console.warn('Service worker registration failed:', err);
+    });
+  });
+}
+
 // ── DOM Elements ──
 const $ = (id) => document.getElementById(id);
 
@@ -197,7 +210,7 @@ function initCamera() {
 }
 
 // ── Matching ──
-async function startMatching(isRematch = false) {
+async function startMatching() {
   if (!currentPhoto || !matcher) return;
 
   setStep(2);
@@ -207,25 +220,17 @@ async function startMatching(isRematch = false) {
   progressFill.style.width = '0%';
 
   try {
-    let result;
-    if (isRematch && currentDescription) {
-      result = await matcher.rematch(currentDescription, (progress, message) => {
-        progressFill.style.width = `${progress}%`;
-        matchingStatus.textContent = message;
-      });
-    } else {
-      result = await matcher.match(currentPhoto, (progress, message) => {
-        progressFill.style.width = `${progress}%`;
-        matchingStatus.textContent = message;
-      });
-      currentDescription = result.personDescription;
-    }
+    const result = await matcher.match(currentPhoto, (progress, message) => {
+      progressFill.style.width = `${progress}%`;
+      matchingStatus.textContent = message;
+    });
+    currentDescription = result.personDescription;
 
     displayResults(result);
     setStep(3);
   } catch (error) {
     console.error('Matching failed:', error);
-    
+
     if (error.message?.includes('API_KEY') || error.message?.includes('401') || error.message?.includes('403')) {
       showToast('Invalid API key. Please check your Gemini API key.');
       localStorage.removeItem('selfig_api_key');
@@ -240,7 +245,7 @@ async function startMatching(isRematch = false) {
 // ── Results ──
 let lastResultParts = [];
 
-function displayResults(result) {
+function displayResults(result, animate = true) {
   const { parts } = result;
   lastResultParts = parts;
 
@@ -255,17 +260,20 @@ function displayResults(result) {
   const acc2 = parts.find(p => p.category.key === 'BAM_ACC_2');
 
   // Left accessory
+  const accDiv1 = document.createElement('div');
+  accDiv1.className = 'minifig-accessory';
+  const img1 = document.createElement('img');
+  img1.dataset.cat = 'BAM_ACC';
+  img1.loading = 'eager';
+  img1.onerror = () => { img1.style.display = 'none'; };
   if (acc1?.imageUrl) {
-    const accDiv = document.createElement('div');
-    accDiv.className = 'minifig-accessory';
-    const img = document.createElement('img');
-    img.src = acc1.imageUrl;
-    img.alt = acc1.partName;
-    img.loading = 'lazy';
-    img.onerror = () => { img.style.display = 'none'; };
-    accDiv.appendChild(img);
-    minifigAssembly.appendChild(accDiv);
+    img1.src = acc1.imageUrl;
+    img1.alt = acc1.partName;
+  } else {
+    img1.style.display = 'none';
   }
+  accDiv1.appendChild(img1);
+  minifigAssembly.appendChild(accDiv1);
 
   // Central body stack
   const bodyDiv = document.createElement('div');
@@ -273,31 +281,36 @@ function displayResults(result) {
   const bodyOrder = ['BAM_HEADWEAR', 'BAM_HEAD', 'BAM_TORSO', 'BAM_LEG'];
   for (const catKey of bodyOrder) {
     const part = parts.find(p => p.category.key === catKey);
+    const img = document.createElement('img');
+    img.dataset.cat = catKey;
+    img.className = 'minifig-part';
+    img.loading = 'eager';
+    img.onerror = () => { img.style.display = 'none'; };
     if (part?.imageUrl) {
-      const img = document.createElement('img');
       img.src = part.imageUrl;
       img.alt = part.partName;
-      img.className = 'minifig-part';
-      img.dataset.cat = catKey;
-      img.loading = 'lazy';
-      img.onerror = () => { img.style.display = 'none'; };
-      bodyDiv.appendChild(img);
+    } else {
+      img.style.display = 'none';
     }
+    bodyDiv.appendChild(img);
   }
   minifigAssembly.appendChild(bodyDiv);
 
   // Right accessory
+  const accDiv2 = document.createElement('div');
+  accDiv2.className = 'minifig-accessory';
+  const img2 = document.createElement('img');
+  img2.dataset.cat = 'BAM_ACC_2';
+  img2.loading = 'eager';
+  img2.onerror = () => { img2.style.display = 'none'; };
   if (acc2?.imageUrl) {
-    const accDiv = document.createElement('div');
-    accDiv.className = 'minifig-accessory';
-    const img = document.createElement('img');
-    img.src = acc2.imageUrl;
-    img.alt = acc2.partName;
-    img.loading = 'lazy';
-    img.onerror = () => { img.style.display = 'none'; };
-    accDiv.appendChild(img);
-    minifigAssembly.appendChild(accDiv);
+    img2.src = acc2.imageUrl;
+    img2.alt = acc2.partName;
+  } else {
+    img2.style.display = 'none';
   }
+  accDiv2.appendChild(img2);
+  minifigAssembly.appendChild(accDiv2);
 
   // Part detail cards
   partsGrid.innerHTML = '';
@@ -307,15 +320,32 @@ function displayResults(result) {
 
     const card = document.createElement('div');
     card.className = 'part-card';
-    card.style.animationDelay = `${i * 0.1}s`;
+    if (!animate) {
+      card.style.animation = 'none';
+    } else {
+      card.style.animationDelay = `${i * 0.1}s`;
+    }
+
+    let cycleBtnHtml = '';
+    if (part.options && part.options.length > 1) {
+      cycleBtnHtml = `
+        <button class="btn-cycle" aria-label="Cycle option" title="Swap part">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+        </button>
+      `;
+    }
 
     card.innerHTML = `
+      ${cycleBtnHtml}
       <div class="part-card-label">${part.category.emoji} ${part.category.label}</div>
       <img
         class="part-card-image"
         src="${part.imageUrl}"
         alt="${part.partName}"
-        loading="lazy"
+        loading="eager"
         onerror="this.style.opacity='0.3'"
       />
       <div class="part-card-name">${cleanPartName(part.partName)}</div>
@@ -323,19 +353,97 @@ function displayResults(result) {
       ${part.price ? `<div class="part-card-price">${part.price.formattedAmount}</div>` : ''}
     `;
 
+    if (part.options && part.options.length > 1) {
+      const btn = card.querySelector('.btn-cycle');
+      btn.addEventListener('click', (e) => {
+        // Prevent default in case it bubbles
+        e.stopPropagation();
+
+        part.currentIndex = (part.currentIndex + 1) % part.options.length;
+        const newOption = part.options[part.currentIndex];
+
+        // Update top-level properties
+        Object.assign(part, newOption);
+
+        // Update Card DOM directly
+        const imgEl = card.querySelector('.part-card-image');
+        if (part.imageUrl) {
+          imgEl.src = part.imageUrl;
+          imgEl.alt = part.partName;
+          imgEl.style.opacity = '1';
+        } else {
+          imgEl.removeAttribute('src');
+          imgEl.style.opacity = '0';
+        }
+        card.querySelector('.part-card-name').textContent = cleanPartName(part.partName);
+        card.querySelector('.part-card-desc').textContent = part.reason;
+        
+        const priceEl = card.querySelector('.part-card-price');
+        if (part.price) {
+          if (priceEl) priceEl.textContent = part.price.formattedAmount;
+          else card.insertAdjacentHTML('beforeend', `<div class="part-card-price">${part.price.formattedAmount}</div>`);
+        } else if (priceEl) {
+          priceEl.remove();
+        }
+
+        // Update Assembly DOM directly
+        const assemblyImg = minifigAssembly.querySelector(`img[data-cat="${part.category.key}"]`);
+        if (assemblyImg) {
+          if (part.imageUrl) {
+            assemblyImg.src = part.imageUrl;
+            assemblyImg.alt = part.partName;
+            assemblyImg.style.display = 'block';
+          } else {
+            assemblyImg.removeAttribute('src');
+            assemblyImg.style.display = 'none';
+          }
+        }
+
+        // Update Parts List DOM directly
+        const listRow = partsList.querySelector(`div[data-cat="${part.category.key}"]`);
+        if (listRow) {
+          if (part.partId) {
+            listRow.style.display = '';
+            listRow.querySelector('.parts-list-id').textContent = part.partId;
+            listRow.querySelector('.parts-list-name').textContent = cleanPartName(part.partName);
+          } else {
+            listRow.style.display = 'none';
+          }
+        }
+      });
+    }
+
     partsGrid.appendChild(card);
   });
+
+  // Prefetch alternate options into the Service Worker cache
+  if (animate) {
+    parts.forEach(part => {
+      if (part.options && part.options.length > 1) {
+        part.options.forEach(opt => {
+          if (opt && opt.imageUrl) {
+            // Using no-cors mode allows the browser to cache opaque responses 
+            // from the CDN without needing CORS headers from the server.
+            fetch(opt.imageUrl, { mode: 'no-cors' }).catch(() => { });
+          }
+        });
+      }
+    });
+  }
 
   // Parts list
   partsList.innerHTML = '';
   parts.forEach(part => {
-    if (!part.partId) return;
     const row = document.createElement('div');
     row.className = 'parts-list-row';
+    row.dataset.cat = part.category.key;
+    if (!part.partId) {
+      row.style.display = 'none';
+    }
     row.innerHTML = `
       <span class="parts-list-cat">${part.category.label}</span>
-      <span class="parts-list-id">${part.partId}</span>
-      <span class="parts-list-name">${cleanPartName(part.partName)}</span>
+      <span class="parts-list-id">${part.partId || ''}</span>
+      <span class="parts-list-name">${part.partId ? cleanPartName(part.partName) : ''}</span>
     `;
     partsList.appendChild(row);
   });
@@ -364,7 +472,7 @@ function cleanPartName(name) {
 // ── Retry & Rematch ──
 function initRetry() {
   rematchBtn.addEventListener('click', () => {
-    startMatching(true);
+    startMatching();
   });
 
   retryBtn.addEventListener('click', () => {

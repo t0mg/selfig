@@ -88,33 +88,17 @@ export class Matcher {
     return { parts: results, personDescription };
   }
 
-  /**
-   * Skips the vision call and uses an existing description to rematch the parts.
-   */
-  async rematch(personDescription, onProgress = () => { }) {
-    if (!this.catalog) await this.loadCatalog();
-
-    onProgress(40, 'Re-matching all parts...');
-
-    const results = await this.matchAllCategories(personDescription);
-    onProgress(90, 'Assembling your minifigure...');
-
-    onProgress(100, 'Done!');
-
-    return { parts: results, personDescription };
-  }
 
   async describePhoto(photoBase64) {
     const result = await this.model.generateContent([
-      `Describe this person in detail for the purpose of creating a matching LEGO minifigure. Focus on:
-1. Skin tone
-2. Hair: color, style, length (or bald/hat)
-3. Face: expression, glasses, facial hair, any distinctive features
-4. Outfit: what they're wearing, colors, style
+      `Describe this person in detail for the purpose of creating a matching LEGO minifigure. Ignore skin tone as the only color available is yellow anyway. Focus on:
+1. Hair: color, style, length (or bald/hat)
+2. Face: perceived age and gender, expression, glasses, facial hair, any distinctive features
+3. Torso: what they're wearing. Describe the dominant color (provide the hex code for the color), then the style and details.
+4. Legs: what they're wearing. Describe the dominant color (provide the hex code for the color), then the style and details.
 5. Accessories: anything they're holding or wearing (jewelry, backpack, etc.)
-6. Overall vibe/personality that comes through
 
-Be detailed but concise. This description will be used to select LEGO minifigure parts.`,
+Be detailed and factual. This description will be used to select LEGO minifigure parts.`,
       {
         inlineData: {
           mimeType: 'image/jpeg',
@@ -159,21 +143,27 @@ ${personDescription}
 AVAILABLE PARTS BY CATEGORY:
 ${sections.join('\n\n')}
 
-Select the ONE best matching part for each body category (head, headwear, torso, legs) and UP TO TWO accessories that suit this person. Consider skin tone, expression, hair color/style, outfit, personality, etc.
+Select 1 to 3 best matching parts for each body category (head, headwear, torso, legs) and UP TO TWO accessories (with 0 to 3 alternatives each) that suit this person. Order your selections from best match to 3rd best. Consider expression, hair color/style, outfit, personality, etc.
 
 CRITICAL RULES:
-1. Accessories are optional. We should not force 2 accessories if there is no strong need for it, or no good match.
-2. Do not include a weapon accessory UNLESS the reference image clearly shows the person holding a weapon.
-3. If the reference image is of a bald person, it is ok to omit the headwear (wig/hat) piece.
-4. For legs, avoid "MINI LEG" type parts unless the reference image is representing a child.
+1. Accessories are OPTIONAL. We should not force any accessories if there is no strong match with the reference.
+2. Do not include any weapon accessory (including firearms, knives, swords, spears, bows, etc) UNLESS the reference clearly mentions the person is holding a weapon.
+3. If the reference describes a bald person, it is ok to omit the headwear (wig/hat). Genrally try to match hair length especially when the reference has long hair.
+4. Respect the color tone for legs and torso. For example, absolutely avoid bright pink elements when the reference is a muted beige.
+5. For legs, avoid "MINI LEG" type parts unless the reference describes a child.
+6. For torso, avoid torso parts with distinctive details unless it is matching the reference.
 
-If you choose to omit an optional part (headwear or accessories), set its "partId" to null.`;
+If you choose to omit an optional part (headwear or accessories), return an empty array or an array containing null for its "partIds".`;
 
     try {
       const partSchema = {
         type: SchemaType.OBJECT,
         properties: {
-          partId: { type: SchemaType.STRING, nullable: true },
+          partIds: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING, nullable: true },
+            nullable: true
+          },
           reason: { type: SchemaType.STRING }
         },
         required: ["reason"]
@@ -215,65 +205,65 @@ If you choose to omit an optional part (headwear or accessories), set its "partI
       return keyMap.map(({ responseKey, catKey, catIndex }) => {
         const pick = parsed[responseKey];
 
-        if (!pick || pick.partId === null || pick.partId === 'null') {
-          return {
-            partId: null,
-            partName: 'None',
-            description: 'No part selected',
-            reason: pick?.reason || 'Intentionally omitted',
-            price: null,
-            imageUrl: null,
-            category: CATEGORY_ORDER[catIndex],
-          };
-        }
-
-        const parts = this.catalog[catKey] || [];
-        const part = parts.find(p => p.id === pick.partId);
-
-        if (part) {
-          return {
-            partId: part.id,
-            designId: part.designId,
-            partName: part.name,
-            description: part.description || part.name,
-            reason: pick.reason || 'Best match',
-            price: part.price,
-            imageUrl: IMG_URL(part.id),
-            category: CATEGORY_ORDER[catIndex],
-          };
-        }
-
-        // For optional categories, if the AI picked an invalid ID,
-        // it is better to omit the part than to force a default selection.
-        if (catKey === 'BAM_ACC' || catKey === 'BAM_HEADWEAR') {
-          return {
-            partId: null,
-            partName: 'None',
-            description: 'No part selected',
-            reason: 'Invalid part ID selected by AI',
-            price: null,
-            imageUrl: null,
-            category: CATEGORY_ORDER[catIndex],
-          };
-        }
-
-        // Fallback: first part in the category
-        const fallback = parts[catIndex === 5 ? 1 : 0] || parts[0];
-        if (!fallback) {
-          return {
-            partId: null, partName: 'Unknown', reason: 'No parts available',
-            category: CATEGORY_ORDER[catIndex],
-          };
-        }
-        return {
-          partId: fallback.id,
-          designId: fallback.designId,
-          partName: fallback.name,
-          description: fallback.description || fallback.name,
-          reason: 'Default selection (matching failed)',
-          price: fallback.price,
-          imageUrl: IMG_URL(fallback.id),
+        const nullOption = {
+          partId: null,
+          partName: 'None',
+          description: 'No part selected',
+          reason: pick?.reason || 'Intentionally omitted',
+          price: null,
+          imageUrl: null,
           category: CATEGORY_ORDER[catIndex],
+        };
+
+        let options = [];
+        const parts = this.catalog[catKey] || [];
+
+        if (pick && pick.partIds && Array.isArray(pick.partIds)) {
+          options = pick.partIds.map(id => {
+            if (id === null || id === 'null') return nullOption;
+            const part = parts.find(p => p.id === id);
+            if (part) {
+              return {
+                partId: part.id,
+                designId: part.designId,
+                partName: part.name,
+                description: part.description || part.name,
+                reason: pick.reason || 'Best match',
+                price: part.price,
+                imageUrl: IMG_URL(part.id),
+                category: CATEGORY_ORDER[catIndex],
+              };
+            }
+            return null;
+          }).filter(Boolean);
+        }
+
+        if (options.length === 0) {
+          if (catKey === 'BAM_ACC' || catKey === 'BAM_HEADWEAR') {
+            options = [{ ...nullOption, reason: 'Invalid part ID selected by AI or explicitly omitted' }];
+          } else {
+            const fallback = parts[catIndex === 5 ? 1 : 0] || parts[0];
+            if (fallback) {
+              options = [{
+                partId: fallback.id,
+                designId: fallback.designId,
+                partName: fallback.name,
+                description: fallback.description || fallback.name,
+                reason: 'Default selection (matching failed)',
+                price: fallback.price,
+                imageUrl: IMG_URL(fallback.id),
+                category: CATEGORY_ORDER[catIndex],
+              }];
+            } else {
+              options = [{ ...nullOption, reason: 'No parts available in catalog' }];
+            }
+          }
+        }
+
+        return {
+          ...options[0],
+          options,
+          currentIndex: 0
         };
       });
     } catch (error) {
@@ -284,12 +274,15 @@ If you choose to omit an optional part (headwear or accessories), set its "partI
         const catKey = i < 4 ? cat.key : 'BAM_ACC';
         const parts = this.catalog[catKey] || [];
         const p = parts[i === 5 ? 1 : 0] || parts[0];
-        if (!p) return { partId: null, partName: 'Unknown', reason: 'No parts', category: cat };
-        return {
+
+        const nullOption = { partId: null, partName: 'Unknown', reason: 'No parts', category: cat };
+        let options = p ? [{
           partId: p.id, designId: p.designId, partName: p.name,
           description: p.description || p.name, reason: 'Default selection',
           price: p.price, imageUrl: IMG_URL(p.id), category: cat,
-        };
+        }] : [nullOption];
+
+        return { ...options[0], options, currentIndex: 0 };
       });
     }
   }
@@ -315,7 +308,7 @@ If you choose to omit an optional part (headwear or accessories), set its "partI
 
   async fileToBase64(file) {
     const MAX_SIZE = 1024;
-    const JPEG_QUALITY = 0.85;
+    const JPEG_QUALITY = 0.75;
 
     // Load the image
     const bitmap = await createImageBitmap(file);

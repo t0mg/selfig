@@ -880,6 +880,32 @@ a:hover {
   text-align: center;
   transition: all var(--transition);
   animation: fadeSlideUp 0.5s ease-out both;
+  position: relative;
+}
+
+.btn-cycle {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition);
+  z-index: 10;
+}
+
+.btn-cycle:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  transform: rotate(180deg);
 }
 
 .part-card:hover {
